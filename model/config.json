@@ -1,0 +1,47 @@
+{
+  "targets": [
+    "ID_1",
+    "ID_2",
+    "ID_3",
+    "ID_4",
+    "ID_5",
+    "ID_6"
+  ],
+  "window_size": 5,
+  "horizon": 5,
+  "seasonal_period": 60,
+  "feature_cols": [
+    "ID_1",
+    "ID_1_trend",
+    "ID_1_seasonal",
+    "ID_1_residual",
+    "ID_2",
+    "ID_2_trend",
+    "ID_2_seasonal",
+    "ID_2_residual",
+    "ID_3",
+    "ID_3_trend",
+    "ID_3_seasonal",
+    "ID_3_residual",
+    "ID_4",
+    "ID_4_trend",
+    "ID_4_seasonal",
+    "ID_4_residual",
+    "ID_5",
+    "ID_5_trend",
+    "ID_5_seasonal",
+    "ID_5_residual",
+    "ID_6",
+    "ID_6_trend",
+    "ID_6_seasonal",
+    "ID_6_residual"
+  ],
+  "target_cols": [
+    "ID_1_t5",
+    "ID_2_t5",
+    "ID_3_t5",
+    "ID_4_t5",
+    "ID_5_t5",
+    "ID_6_t5"
+  ]
+}

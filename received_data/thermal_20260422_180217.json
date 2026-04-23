@@ -1,0 +1,43 @@
+{
+    "timestamp": "2026-04-22 18:02:17",
+    "camera_ip": "192.168.10.152",
+    "total": 6,
+    "points": [
+        {
+            "id": "ID:1",
+            "mx": 252,
+            "my": 70,
+            "temperature": 42.5
+        },
+        {
+            "id": "ID:2",
+            "mx": 289,
+            "my": 44,
+            "temperature": 43.0
+        },
+        {
+            "id": "ID:3",
+            "mx": 321,
+            "my": 42,
+            "temperature": 43.5
+        },
+        {
+            "id": "ID:4",
+            "mx": 338,
+            "my": 70,
+            "temperature": 44.0
+        },
+        {
+            "id": "ID:5",
+            "mx": 295,
+            "my": 69,
+            "temperature": 44.5
+        },
+        {
+            "id": "ID:6",
+            "mx": 95,
+            "my": 87,
+            "temperature": 45.0
+        }
+    ]
+}

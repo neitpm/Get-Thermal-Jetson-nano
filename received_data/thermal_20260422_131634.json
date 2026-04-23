@@ -1,0 +1,67 @@
+{
+    "timestamp": "2026-04-22 06:16:34",
+    "camera_ip": "192.168.10.152",
+    "total": 10,
+    "points": [
+        {
+            "id": "ID:1",
+            "mx": 76,
+            "my": 57,
+            "temperature": 38.0
+        },
+        {
+            "id": "ID:2",
+            "mx": 192,
+            "my": 57,
+            "temperature": 41.2
+        },
+        {
+            "id": "ID:3",
+            "mx": 307,
+            "my": 57,
+            "temperature": 39.4
+        },
+        {
+            "id": "ID:4",
+            "mx": 76,
+            "my": 144,
+            "temperature": 43.7
+        },
+        {
+            "id": "ID:5",
+            "mx": 192,
+            "my": 144,
+            "temperature": 50.7
+        },
+        {
+            "id": "ID:6",
+            "mx": 307,
+            "my": 144,
+            "temperature": 44.2
+        },
+        {
+            "id": "ID:7",
+            "mx": 76,
+            "my": 230,
+            "temperature": 54.0
+        },
+        {
+            "id": "ID:8",
+            "mx": 192,
+            "my": 230,
+            "temperature": 41.3
+        },
+        {
+            "id": "ID:9",
+            "mx": 307,
+            "my": 230,
+            "temperature": 44.8
+        },
+        {
+            "id": "ID:10",
+            "mx": 192,
+            "my": 86,
+            "temperature": 49.8
+        }
+    ]
+}

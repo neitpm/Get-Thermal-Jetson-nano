@@ -1,0 +1,9 @@
+{
+  "window_size": 5,
+  "n_features": 24,
+  "n_targets": 6,
+  "tkan_units_1": 64,
+  "tkan_units_2": 32,
+  "dense_units": 32,
+  "dropout_rate": 0.1
+}
