@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+import uvicorn
 from datetime import datetime
 import json
 import os
@@ -346,3 +347,7 @@ async def receive_thermal_data(request: Request):
             "success": False,
             "error": str(e)
         }
+
+
+if __name__ == "__main__":
+    uvicorn.run("thermal_receiver:app", host="0.0.0.0", port=8000, reload=True)

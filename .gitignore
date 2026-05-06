@@ -1,3 +1,10 @@
 __pycache__/
 tf_env/
 .codex
+received_data/
+data/live_thermal_history.csv
+data/live_predictions.csv
+data/live_evaluations.csv
+.vscode/
+.idea/
+*.pyc

@@ -1,3 +1,4 @@
+import os
 import json
 import joblib
 import numpy as np
@@ -17,23 +18,17 @@ TARGET_COLS = config["target_cols"]
 # =========================
 # LOAD MODEL + SCALER
 # =========================
-model = load_model("model/mtkan_model.keras", compile=False)
+from src.model_builder import build_mtkan_model
+model = build_mtkan_model("model/model_config_train.json")
+model.load_weights("model/mtkan_weights.weights.h5")
 scaler_X = joblib.load("model/scaler_X.pkl")
 scaler_y = joblib.load("model/scaler_y.pkl")
 
 
 def predict_all_windows(data_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Chạy dự đoán theo sliding window trên toàn bộ file.
+    from src.preprocess import prepare_feature_df
+    data_df = prepare_feature_df(data_df)
 
-    Input:
-        data_df: DataFrame chứa đầy đủ các cột feature_cols
-
-    Output:
-        DataFrame gồm:
-        - window_end_index: vị trí kết thúc của cửa sổ
-        - các cột dự đoán tương ứng TARGET_COLS
-    """
     # Kiểm tra thiếu cột
     missing_cols = [col for col in FEATURE_COLS if col not in data_df.columns]
     if missing_cols:
@@ -77,10 +72,13 @@ def predict_all_windows(data_df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # Ví dụ test
-    input_csv = "data/latest.csv"
+    input_csv = "data/39-43.csv"
     output_csv = "data/predictions_all_windows.csv"
 
-    df = pd.read_csv(input_csv)
+    if not os.path.exists(input_csv):
+        print(f"Lỗi: Không tìm thấy file {input_csv}")
+    else:
+        df = pd.read_csv(input_csv)
     pred_df = predict_all_windows(df)
 
     print(pred_df.head())
