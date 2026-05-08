@@ -17,7 +17,7 @@ DATA_DIR = "data"
 RAW_HISTORY_CSV = os.path.join(DATA_DIR, "live_thermal_history.csv")
 PREDICTIONS_CSV = os.path.join(DATA_DIR, "live_predictions.csv")
 EVALUATIONS_CSV = os.path.join(DATA_DIR, "live_evaluations.csv")
-DEFAULT_PREDICTION_CALLBACK_URL = "http://100.68.240.98:7000/api/prediction"
+DEFAULT_PREDICTION_CALLBACK_URL = "http://192.168.10.10:8080/api/prediction"
 PREDICTION_CALLBACK_URL = os.getenv(
     "PREDICTION_CALLBACK_URL",
     DEFAULT_PREDICTION_CALLBACK_URL,
@@ -36,6 +36,11 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 state_lock = threading.Lock()
+
+
+# Global variables to cache data for performance
+_cached_history_df = None
+_cached_predictions_df = None
 
 
 def to_timestamp_text(value):
@@ -68,16 +73,25 @@ def read_csv_if_exists(path: str) -> pd.DataFrame:
 
 
 def save_history_row(row: dict) -> pd.DataFrame:
-    history_df = read_csv_if_exists(RAW_HISTORY_CSV)
+    global _cached_history_df
+    
+    # 1. Fast append to CSV
     row_df = pd.DataFrame([row])
-    history_df = pd.concat([history_df, row_df], ignore_index=True)
-    history_df["Timestamp"] = pd.to_datetime(history_df["Timestamp"], errors="coerce")
-    history_df = history_df.dropna(subset=["Timestamp"])
-    history_df = history_df.drop_duplicates(subset=["Timestamp"], keep="last")
-    history_df = history_df.sort_values("Timestamp").reset_index(drop=True)
-    history_df["Timestamp"] = history_df["Timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    history_df.to_csv(RAW_HISTORY_CSV, index=False)
-    return history_df
+    file_exists = os.path.exists(RAW_HISTORY_CSV)
+    row_df.to_csv(RAW_HISTORY_CSV, mode='a', header=not file_exists, index=False)
+    
+    # 2. Update memory cache (keep only last 200 rows for prediction)
+    if _cached_history_df is None:
+        if file_exists:
+            _cached_history_df = pd.read_csv(RAW_HISTORY_CSV).tail(200)
+        else:
+            _cached_history_df = row_df.copy()
+    else:
+        _cached_history_df = pd.concat([_cached_history_df, row_df], ignore_index=True)
+        if len(_cached_history_df) > 200:
+            _cached_history_df = _cached_history_df.tail(200)
+            
+    return _cached_history_df
 
 
 def append_rows(path: str, rows: list[dict]) -> None:
@@ -91,15 +105,20 @@ def append_rows(path: str, rows: list[dict]) -> None:
 
 
 def evaluate_due_predictions(actual_row: dict) -> dict | None:
-    predictions_df = read_csv_if_exists(PREDICTIONS_CSV)
-    if predictions_df.empty:
+    global _cached_predictions_df
+    
+    if _cached_predictions_df is None:
+        _cached_predictions_df = read_csv_if_exists(PREDICTIONS_CSV).tail(100)
+        
+    if _cached_predictions_df.empty:
         return None
 
     actual_ts = pd.to_datetime(actual_row["Timestamp"])
-    predictions_df["forecast_timestamp_dt"] = pd.to_datetime(
-        predictions_df["forecast_timestamp"], errors="coerce"
+    df = _cached_predictions_df.copy()
+    df["forecast_timestamp_dt"] = pd.to_datetime(
+        df["forecast_timestamp"], errors="coerce"
     )
-    due_df = predictions_df[predictions_df["forecast_timestamp_dt"] == actual_ts].copy()
+    due_df = df[df["forecast_timestamp_dt"] == actual_ts].copy()
     if due_df.empty:
         return None
 
@@ -150,6 +169,7 @@ def evaluate_due_predictions(actual_row: dict) -> dict | None:
 
 
 def save_prediction(history_df: pd.DataFrame) -> dict:
+    global _cached_predictions_df
     from src.predict import predict_last
 
     pred_df = predict_last(history_df)
@@ -165,22 +185,31 @@ def save_prediction(history_df: pd.DataFrame) -> dict:
     for target, pred_col in TARGET_TO_PRED_COL.items():
         record[f"{target}_pred"] = float(pred_df.iloc[0][pred_col])
 
-    predictions_df = read_csv_if_exists(PREDICTIONS_CSV)
-    if not predictions_df.empty:
-        predictions_df = predictions_df[
-            predictions_df["input_timestamp"] != record["input_timestamp"]
-        ]
-    predictions_df = pd.concat([predictions_df, pd.DataFrame([record])], ignore_index=True)
-    predictions_df.to_csv(PREDICTIONS_CSV, index=False)
+    # 1. Fast append to CSV
+    row_df = pd.DataFrame([record])
+    file_exists = os.path.exists(PREDICTIONS_CSV)
+    row_df.to_csv(PREDICTIONS_CSV, mode='a', header=not file_exists, index=False)
+    
+    # 2. Update cache
+    if _cached_predictions_df is None:
+        if file_exists:
+            _cached_predictions_df = pd.read_csv(PREDICTIONS_CSV).tail(100)
+        else:
+            _cached_predictions_df = row_df.copy()
+    else:
+        _cached_predictions_df = pd.concat([_cached_predictions_df, row_df], ignore_index=True)
+        if len(_cached_predictions_df) > 100:
+            _cached_predictions_df = _cached_predictions_df.tail(100)
 
     return record
 
 
-def send_prediction_callback(prediction: dict) -> dict:
-    if not PREDICTION_CALLBACK_URL:
+def send_prediction_callback(prediction: dict, target_url: str = None) -> dict:
+    url = target_url or PREDICTION_CALLBACK_URL
+    if not url:
         return {
             "sent": False,
-            "reason": "PREDICTION_CALLBACK_URL chưa được cấu hình",
+            "reason": "URL callback chưa được cấu hình",
         }
 
     payload = {
@@ -189,7 +218,7 @@ def send_prediction_callback(prediction: dict) -> dict:
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urlrequest.Request(
-        PREDICTION_CALLBACK_URL,
+        url,
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -250,6 +279,7 @@ def health():
 
 
 @app.get("/api/latest-prediction")
+@app.get("/api/prediction")
 def latest_prediction():
     prediction = get_latest_prediction()
     if not prediction:
@@ -299,21 +329,41 @@ async def receive_thermal_data(request: Request):
         print(json.dumps(data, ensure_ascii=False, indent=2))
 
         row = thermal_json_to_row(data)
+        prediction = None
+        prediction_status = "not_started"
+        callback_result = None
+
+        callback_result = None
         with state_lock:
             history_df = save_history_row(row)
             evaluation = evaluate_due_predictions(row)
 
+            print(f"Dữ liệu hiện có: {len(history_df)} dòng trong lịch sử.")
             try:
                 prediction = save_prediction(history_df)
                 prediction_status = "created"
+                print("Dự đoán thành công!")
             except ValueError as e:
-                prediction = None
                 prediction_status = f"not_ready: {e}"
+                print(f"Chưa thể dự đoán: {e}")
             except Exception as e:
-                prediction = None
                 prediction_status = f"failed: {e}"
-
-        callback_result = None
+                print(f"Lỗi khi dự đoán: {e}")
+        # Cơ chế PUSH đã bị vô hiệu hóa theo yêu cầu. 
+        # Server bên kia sẽ chủ động PULL dữ liệu qua GET /api/prediction
+        # if prediction:
+        #     target_url = PREDICTION_CALLBACK_URL
+        #     if not target_url:
+        #         client_ip = request.client.host
+        #         target_url = f"http://{client_ip}:8080/api/prediction"
+        #     
+        #     print(f"Đang gửi dự đoán tới {target_url}...")
+        #     callback_result = send_prediction_callback(prediction, target_url=target_url)
+        #     
+        #     if callback_result.get("sent"):
+        #         print(f"Gửi thành công tới {target_url}")
+        #     else:
+        #         print(f"Gửi thất bại tới {target_url}: {callback_result.get('error') or callback_result.get('reason')}")
 
         print(f"Đã lưu history: {len(history_df)} dòng")
         if evaluation:
@@ -328,7 +378,7 @@ async def receive_thermal_data(request: Request):
         print(f"Trạng thái dự đoán mới: {prediction_status}")
         if prediction:
             print(json.dumps(prediction, ensure_ascii=False, indent=2))
-            print("Prediction đã lưu, chờ bên kia fetch qua GET /api/latest-prediction")
+            print("=> Prediction đã sẵn sàng để máy kia PULL (GET /api/prediction)")
 
         return {
             "success": True,
@@ -350,4 +400,4 @@ async def receive_thermal_data(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("thermal_receiver:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("thermal_receiver:app", host="0.0.0.0", port=8080, reload=True)
