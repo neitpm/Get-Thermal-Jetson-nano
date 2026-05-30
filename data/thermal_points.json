@@ -1,0 +1,146 @@
+{
+    "stream_id": "cam_192_168_10_152_thermal",
+    "device_id": "c0c5eadf-81d5-4936-b211-dcb62bdbd45f",
+    "camera_ip": "192.168.10.152",
+    "username": "admin",
+    "password": "Demo@2024",
+    "points": [
+        {
+            "id": "P1",
+            "x": 0.18613763,
+            "y": 0.288089,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 1"
+        },
+        {
+            "id": "P2",
+            "x": 0.7440539,
+            "y": 0.33754635,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 2"
+        },
+        {
+            "id": "P3",
+            "x": 0.528834,
+            "y": 0.26542106,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 3"
+        },
+        {
+            "id": "P4",
+            "x": 0.44605708,
+            "y": 0.5250721,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 4"
+        },
+        {
+            "id": "P5",
+            "x": 0.6563104,
+            "y": 0.5807116,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 5"
+        },
+        {
+            "id": "P6",
+            "x": 0.77385354,
+            "y": 0.55392224,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 6"
+        },
+        {
+            "id": "P7",
+            "x": 0.25401467,
+            "y": 0.4426432,
+            "pre_alarm": 60,
+            "alarm": 80,
+            "label": "Điểm đo 7"
+        },
+        {
+            "id": "PT_AUTO_1",
+            "x": 0.15,
+            "y": 0.25,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 1"
+        },
+        {
+            "id": "PT_AUTO_2",
+            "x": 0.2,
+            "y": 0.3,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 2"
+        },
+        {
+            "id": "PT_AUTO_3",
+            "x": 0.25,
+            "y": 0.35,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 3"
+        },
+        {
+            "id": "PT_AUTO_4",
+            "x": 0.3,
+            "y": 0.4,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 4"
+        },
+        {
+            "id": "PT_AUTO_5",
+            "x": 0.35,
+            "y": 0.45,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 5"
+        },
+        {
+            "id": "PT_AUTO_6",
+            "x": 0.4,
+            "y": 0.5,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 6"
+        },
+        {
+            "id": "PT_AUTO_7",
+            "x": 0.45,
+            "y": 0.55,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 7"
+        },
+        {
+            "id": "PT_AUTO_8",
+            "x": 0.5,
+            "y": 0.6,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 8"
+        },
+        {
+            "id": "PT_AUTO_9",
+            "x": 0.55,
+            "y": 0.65,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 9"
+        },
+        {
+            "id": "PT_AUTO_10",
+            "x": 0.6,
+            "y": 0.7,
+            "pre_alarm": 65,
+            "alarm": 85,
+            "label": "Điểm đo tự động 10"
+        }
+    ],
+    "zones": []
+}

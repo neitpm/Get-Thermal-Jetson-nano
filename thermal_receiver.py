@@ -4,6 +4,10 @@ from datetime import datetime
 import json
 import os
 import threading
+import subprocess
+import sys
+import time
+import requests
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 
@@ -17,20 +21,36 @@ DATA_DIR = "data"
 RAW_HISTORY_CSV = os.path.join(DATA_DIR, "live_thermal_history.csv")
 PREDICTIONS_CSV = os.path.join(DATA_DIR, "live_predictions.csv")
 EVALUATIONS_CSV = os.path.join(DATA_DIR, "live_evaluations.csv")
-DEFAULT_PREDICTION_CALLBACK_URL = "http://192.168.10.10:8080/api/prediction"
+DEFAULT_PREDICTION_CALLBACK_URL = "http://192.168.10.102:8100/api/prediction"
 PREDICTION_CALLBACK_URL = os.getenv(
     "PREDICTION_CALLBACK_URL",
     DEFAULT_PREDICTION_CALLBACK_URL,
 ).strip()
 CALLBACK_TIMEOUT_SECONDS = float(os.getenv("PREDICTION_CALLBACK_TIMEOUT", "5"))
 
-with open("model/config.json", "r", encoding="utf-8") as f:
-    config = json.load(f)
+TARGETS = []
+TARGET_COLS = []
+HORIZON = 5
+TARGET_TO_PRED_COL = {}
 
-TARGETS = config["targets"]
-TARGET_COLS = config["target_cols"]
-HORIZON = config["horizon"]
-TARGET_TO_PRED_COL = dict(zip(TARGETS, TARGET_COLS))
+def reload_config():
+    global TARGETS, TARGET_COLS, HORIZON, TARGET_TO_PRED_COL, _cached_history_df, _cached_predictions_df
+    try:
+        with open("model/config.json", "r", encoding="utf-8") as f:
+            config = json.load(f)
+        TARGETS = config["targets"]
+        TARGET_COLS = config["target_cols"]
+        HORIZON = config["horizon"]
+        TARGET_TO_PRED_COL = dict(zip(TARGETS, TARGET_COLS))
+        _cached_history_df = None
+        _cached_predictions_df = None
+        print(f"[CONFIG] Da reload cấu hình. Targets mới: {TARGETS}")
+    except Exception as e:
+        print(f"[CONFIG-ERROR] Lỗi khi reload cấu hình: {e}")
+
+# Load ban đầu
+reload_config()
+
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -59,9 +79,10 @@ def thermal_json_to_row(data: dict) -> dict:
         if point_id in TARGETS:
             row[point_id] = point.get("temperature")
 
-    missing = [target for target in TARGETS if target not in row]
-    if missing:
-        raise ValueError(f"Thiếu điểm nhiệt: {missing}")
+    # Điền giá trị None cho các target bị thiếu (ví dụ: chưa có tọa độ hoặc lỗi cảm biến)
+    for target in TARGETS:
+        if target not in row:
+            row[target] = None
 
     return row
 
@@ -212,10 +233,7 @@ def send_prediction_callback(prediction: dict, target_url: str = None) -> dict:
             "reason": "URL callback chưa được cấu hình",
         }
 
-    payload = {
-        "type": "thermal_prediction",
-        "prediction": prediction,
-    }
+    payload = prediction
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urlrequest.Request(
         url,
@@ -313,6 +331,91 @@ def send_latest_prediction():
     }
 
 
+# ==========================================
+# AUTOMATIC BACKGROUND RETRAINING DAEMON
+# ==========================================
+training_lock = threading.Lock()
+is_training = False
+
+def trigger_background_training():
+    global is_training
+    with training_lock:
+        if is_training:
+            print("[AUTOTRAIN] Một tiến trình huấn luyện đang chạy, bỏ qua kích hoạt trùng lặp.", flush=True)
+            return
+        is_training = True
+
+    def train_job():
+        global is_training
+        print("[AUTOTRAIN] Bắt đầu tự động huấn luyện lại model (Fine-tuning)...", flush=True)
+        try:
+            cwd = os.path.dirname(os.path.abspath(__file__))
+            venv_python = os.path.join(cwd, "tf_env", "bin", "python")
+            if not os.path.exists(venv_python):
+                venv_python = sys.executable
+
+            p = subprocess.Popen(
+                [venv_python, "train.py"],
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            # Đọc liên tục log để tránh đầy buffer ống dẫn
+            for line in iter(p.stdout.readline, ''):
+                if line:
+                    print(f"[AUTOTRAIN-LOG] {line.strip()}", flush=True)
+            p.wait()
+            print(f"[AUTOTRAIN] Đã hoàn thành tự động huấn luyện lại model. Exit code: {p.returncode}", flush=True)
+            
+            if p.returncode == 0:
+                # Nạp lại trọng số mới vào RAM trực tiếp không cần khởi động lại
+                from src.predict import reload_model_weights
+                reload_model_weights()
+                
+                # Ghi nhận mốc thời gian huấn luyện thành công
+                meta_path = os.path.join(cwd, "model", "training_meta.json")
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump({"last_trained": time.time()}, f, ensure_ascii=False, indent=4)
+                    
+        except Exception as e:
+            print(f"[AUTOTRAIN-ERROR] Lỗi khi chạy huấn luyện ngầm: {e}", flush=True)
+        finally:
+            with training_lock:
+                is_training = False
+
+    threading.Thread(target=train_job, daemon=True).start()
+
+
+def check_and_trigger_autotrain():
+    """Tự động kiểm tra xem đã qua 2 ngày (172800 giây) kể từ lần train cuối cùng chưa."""
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    meta_path = os.path.join(cwd, "model", "training_meta.json")
+    should_train = False
+    
+    # 2 ngày = 2 * 24 * 3600 = 172800 giây
+    INTERVAL_SECONDS = 172800
+    
+    if not os.path.exists(meta_path):
+        # Chưa từng train tự động -> Đánh dấu mốc ban đầu (không train ngay lập tức để tránh overload lúc mới chạy)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump({"last_trained": time.time()}, f, ensure_ascii=False, indent=4)
+        return
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        last_trained = meta.get("last_trained", 0)
+        if time.time() - last_trained >= INTERVAL_SECONDS:
+            should_train = True
+    except Exception:
+        should_train = True
+
+    if should_train:
+        trigger_background_training()
+
+
 @app.post("/api/thermal-data")
 async def receive_thermal_data(request: Request):
     try:
@@ -349,21 +452,20 @@ async def receive_thermal_data(request: Request):
             except Exception as e:
                 prediction_status = f"failed: {e}"
                 print(f"Lỗi khi dự đoán: {e}")
-        # Cơ chế PUSH đã bị vô hiệu hóa theo yêu cầu. 
-        # Server bên kia sẽ chủ động PULL dữ liệu qua GET /api/prediction
-        # if prediction:
-        #     target_url = PREDICTION_CALLBACK_URL
-        #     if not target_url:
-        #         client_ip = request.client.host
-        #         target_url = f"http://{client_ip}:8080/api/prediction"
-        #     
-        #     print(f"Đang gửi dự đoán tới {target_url}...")
-        #     callback_result = send_prediction_callback(prediction, target_url=target_url)
-        #     
-        #     if callback_result.get("sent"):
-        #         print(f"Gửi thành công tới {target_url}")
-        #     else:
-        #         print(f"Gửi thất bại tới {target_url}: {callback_result.get('error') or callback_result.get('reason')}")
+        # Thực hiện cơ chế PUSH dự báo sang Server trung tâm (hoặc bên thứ 3)
+        if prediction:
+            target_url = PREDICTION_CALLBACK_URL
+            if not target_url:
+                client_ip = request.client.host
+                target_url = f"http://{client_ip}:8080/api/prediction"
+            
+            print(f"Đang gửi dự đoán tới {target_url}...")
+            callback_result = send_prediction_callback(prediction, target_url=target_url)
+            
+            if callback_result.get("sent"):
+                print(f"Gửi thành công tới {target_url}")
+            else:
+                print(f"Gửi thất bại tới {target_url}: {callback_result.get('error') or callback_result.get('reason')}")
 
         print(f"Đã lưu history: {len(history_df)} dòng")
         if evaluation:
@@ -378,7 +480,11 @@ async def receive_thermal_data(request: Request):
         print(f"Trạng thái dự đoán mới: {prediction_status}")
         if prediction:
             print(json.dumps(prediction, ensure_ascii=False, indent=2))
-            print("=> Prediction đã sẵn sàng để máy kia PULL (GET /api/prediction)")
+        # Tự động kiểm tra và kích hoạt huấn luyện lại model sau mỗi 2 ngày
+        try:
+            check_and_trigger_autotrain()
+        except Exception as ex:
+            print(f"[AUTOTRAIN-ERROR] Lỗi khi kiểm tra tự động huấn luyện: {ex}", flush=True)
 
         return {
             "success": True,
@@ -397,6 +503,235 @@ async def receive_thermal_data(request: Request):
             "success": False,
             "error": str(e)
         }
+
+@app.post("/api/v1/config/thermal")
+@app.post("/config/thermal")
+async def save_thermal_config(request: Request, forward: bool = True):
+    """
+    1. API cập nhật tọa độ hình ảnh (Thermal Analyzer Configuration):
+    """
+    try:
+        data = await request.json()
+        config_path = os.path.join(DATA_DIR, "thermal_points.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        print(f"[CONFIG] Đã nhận và lưu cấu hình điểm đo nhiệt mới vào: {config_path}")
+
+        # 1a. Forward cấu hình sang Server trung tâm (192.168.10.102:8100)
+        if forward:
+            try:
+                central_url = "http://192.168.10.102:8100/config/thermal"
+                print(f"[CONFIG] Forwarding config/thermal to central server: {central_url}")
+                requests.post(central_url, json=data, timeout=5)
+            except Exception as e:
+                print(f"[CONFIG-ERROR] Failed to forward config/thermal to central server: {e}")
+
+        # 1b. Tự động đồng bộ targets từ các points vừa nhận vào config.json
+        if "points" in data:
+            targets = [p.get("label") or p.get("id") for p in data["points"] if p.get("label") or p.get("id")]
+            if targets:
+                config_path_json = "model/config.json"
+                if os.path.exists(config_path_json):
+                    with open(config_path_json, "r", encoding="utf-8") as f:
+                        model_config = json.load(f)
+                else:
+                    model_config = {"window_size": 5, "horizon": 5, "seasonal_period": 60}
+
+                model_config["targets"] = targets
+                
+                # Tạo động feature_cols và target_cols
+                horizon = model_config.get("horizon", 5)
+                feature_cols = []
+                target_cols = []
+                for t in targets:
+                    feature_cols.extend([t, f"{t}_trend", f"{t}_seasonal", f"{t}_residual"])
+                    target_cols.append(f"{t}_t{horizon}")
+                    
+                model_config["feature_cols"] = feature_cols
+                model_config["target_cols"] = target_cols
+
+                with open(config_path_json, "w", encoding="utf-8") as f:
+                    json.dump(model_config, f, ensure_ascii=False, indent=4)
+
+                # Làm sạch file raw history (lưu header mới)
+                headers = ["Timestamp"] + targets
+                pd.DataFrame(columns=headers).to_csv(RAW_HISTORY_CSV, index=False)
+
+                # Làm sạch predictions và evaluations để đồng bộ cấu trúc mới
+                pred_headers = ["issued_at", "input_timestamp", "forecast_timestamp"] + [f"{t}_pred" for t in targets]
+                pd.DataFrame(columns=pred_headers).to_csv(PREDICTIONS_CSV, index=False)
+                
+                eval_headers = ["evaluated_at", "issued_at", "input_timestamp", "forecast_timestamp", "target", "predicted", "actual", "error", "abs_error", "squared_error"]
+                pd.DataFrame(columns=eval_headers).to_csv(EVALUATIONS_CSV, index=False)
+
+                # Nạp lại cấu hình vào bộ nhớ RAM
+                reload_config()
+
+                print(f"[CONFIG] Đã tự động đồng bộ targets từ points mới: {targets}. Kích hoạt Retrain...")
+                trigger_background_training()
+
+        return {"success": True, "message": "Đã cập nhật tọa độ điểm nhiệt thành công"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/config/update")
+async def update_forecasting_targets(request: Request, forward: bool = True):
+    """
+    2. API cập nhật danh sách dự báo (Forecasting Targets):
+    """
+    try:
+        data = await request.json()
+        targets = data.get("targets")
+        if not targets:
+            return {"success": False, "error": "Thiếu danh sách targets"}
+
+        # 2a. Forward cấu hình sang Server trung tâm (192.168.10.102:8100)
+        if forward:
+            try:
+                central_url = "http://192.168.10.102:8100/api/config/update"
+                print(f"[CONFIG] Forwarding api/config/update to central server: {central_url}")
+                requests.post(central_url, json=data, timeout=5)
+            except Exception as e:
+                print(f"[CONFIG-ERROR] Failed to forward api/config/update to central server: {e}")
+
+        # Đọc config.json hiện tại
+        config_path = "model/config.json"
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                model_config = json.load(f)
+        else:
+            model_config = {"window_size": 5, "horizon": 5, "seasonal_period": 60}
+
+        model_config["targets"] = targets
+        
+        # Tạo động feature_cols và target_cols
+        horizon = model_config.get("horizon", 5)
+        feature_cols = []
+        target_cols = []
+        for t in targets:
+            feature_cols.extend([t, f"{t}_trend", f"{t}_seasonal", f"{t}_residual"])
+            target_cols.append(f"{t}_t{horizon}")
+            
+        model_config["feature_cols"] = feature_cols
+        model_config["target_cols"] = target_cols
+
+        # Ghi đè targets vào file config
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(model_config, f, ensure_ascii=False, indent=4)
+
+        # Làm sạch file raw history (lưu header mới)
+        headers = ["Timestamp"] + targets
+        pd.DataFrame(columns=headers).to_csv(RAW_HISTORY_CSV, index=False)
+
+        # Làm sạch predictions và evaluations để đồng bộ cấu trúc mới
+        pred_headers = ["issued_at", "input_timestamp", "forecast_timestamp"] + [f"{t}_pred" for t in targets]
+        pd.DataFrame(columns=pred_headers).to_csv(PREDICTIONS_CSV, index=False)
+        
+        eval_headers = ["evaluated_at", "issued_at", "input_timestamp", "forecast_timestamp", "target", "predicted", "actual", "error", "abs_error", "squared_error"]
+        pd.DataFrame(columns=eval_headers).to_csv(EVALUATIONS_CSV, index=False)
+
+        # Nạp lại cấu hình vào bộ nhớ RAM
+        reload_config()
+
+        print(f"[CONFIG] Đã cập nhật targets dự báo mới: {targets}. Làm sạch dữ liệu cũ và kích hoạt Retrain...")
+
+        # Kích hoạt tiến trình Retrain ngầm
+        trigger_background_training()
+
+        return {"success": True, "message": "Cấu hình targets mới thành công và đang retrain ngầm"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/prediction/history")
+def get_prediction_history():
+    """
+    Trả về dữ liệu lịch sử thực tế song song với dữ liệu dự báo cho từng mốc thời gian.
+    Format: { "history": [ { "timestamp": "HH:MM", "Nhãn_1_actual": 31.5, "Nhãn_1_pred": 32.0, ... } ] }
+    """
+    try:
+        history_df = read_csv_if_exists(RAW_HISTORY_CSV)
+        predictions_df = read_csv_if_exists(PREDICTIONS_CSV)
+
+        timestamps = set()
+        if not history_df.empty and "Timestamp" in history_df.columns:
+            timestamps.update(history_df["Timestamp"].dropna().tolist())
+        if not predictions_df.empty and "forecast_timestamp" in predictions_df.columns:
+            timestamps.update(predictions_df["forecast_timestamp"].dropna().tolist())
+
+        sorted_timestamps = sorted(list(timestamps))
+
+        history_lookup = {}
+        if not history_df.empty:
+            for _, r in history_df.iterrows():
+                ts = r.get("Timestamp")
+                if ts:
+                    history_lookup[str(ts)] = r.to_dict()
+
+        pred_lookup = {}
+        if not predictions_df.empty:
+            for _, r in predictions_df.iterrows():
+                ts = r.get("forecast_timestamp")
+                if ts:
+                    pred_lookup[str(ts)] = r.to_dict()
+
+        history_list = []
+        # Lấy tối đa 50 mốc thời gian gần nhất để vẽ biểu đồ
+        for ts in sorted_timestamps[-50:]:
+            try:
+                dt = pd.to_datetime(ts)
+                time_str = dt.strftime("%H:%M")
+            except Exception:
+                time_str = str(ts)
+
+            entry = {"timestamp": time_str}
+            hist_row = history_lookup.get(ts, {})
+            pred_row = pred_lookup.get(ts, {})
+
+            for target in TARGETS:
+                # Actual
+                val_act = hist_row.get(target)
+                if pd.isna(val_act) or val_act is None:
+                    val_act = None
+                else:
+                    val_act = float(val_act)
+                entry[f"{target}_actual"] = val_act
+
+                # Predicted
+                val_pred = pred_row.get(f"{target}_pred")
+                if pd.isna(val_pred) or val_pred is None:
+                    val_pred = None
+                else:
+                    val_pred = float(val_pred)
+                entry[f"{target}_pred"] = val_pred
+
+            history_list.append(entry)
+
+        return {"history": history_list}
+    except Exception as e:
+        return {"history": [], "error": str(e)}
+
+@app.get("/api/training-status")
+def get_training_status():
+    """
+    Trả về trạng thái tiến trình huấn luyện model ngầm
+    """
+    global is_training
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    meta_path = os.path.join(cwd, "model", "training_meta.json")
+    last_trained_str = None
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            last_trained_time = meta.get("last_trained", 0)
+            last_trained_str = datetime.fromtimestamp(last_trained_time).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+
+    return {
+        "status": "training" if is_training else "idle",
+        "last_trained": last_trained_str
+    }
 
 
 if __name__ == "__main__":
