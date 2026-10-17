@@ -33,19 +33,27 @@ flowchart LR
     F --> G["HTTP POST /api/thermal-data\n(AI-Thermal-detect :8080)"]
 ```
 
-### Data Pipeline Specifications
-- **Sensor Protocol:** Hikvision ISAPI over HTTP Digest Authentication.
-- **Acquisition Endpoint:** `/ISAPI/Thermal/channels/2/thermometry/jpegPicWithAppendData?format=json`.
-- **Packet Structure:** Multipart MIME message containing:
-  - `Content-Type: application/json`: Metadata header with fields `jpegPicWidth`, `jpegPicHeight`, and `p2pDataLen`.
-  - `Content-Type: image/jpeg`: Synchronous visual reference snapshot.
-  - `Content-Type: application/octet-stream`: Raw uncompressed binary buffer of IEEE-754 32-bit floating-point temperature values.
-- **Decoded Matrix Shape:** **$(288, 384)$** (height $\times$ width), dtype `np.float32`.
-- **Measurement Unit:** True calibrated temperature in degrees Celsius (°C).
+---
+
+## 3. High-Resolution 3D Volumetric Architecture Figures
+
+Below is the suite of isometric 3D volumetric tensor block diagrams detailing the hardware acquisition and radiometric matrix transformation:
+
+#### Figure 1: Hikvision ISAPI Radiometric Camera Acquisition Flow
+*Physical sensor handshake, encrypted HTTP Digest authentication, multipart MIME demuxing, and raw binary buffer extraction.*
+![Camera Acquisition 3D](docs/figures/1_camera_acquisition_3d.png)
+
+#### Figure 2: Radiometric 384x288 Float32 Matrix Transformation
+*Uncompressed IEEE-754 float32 byte casting, 2D spatial grid reshaping, and normalized coordinate target querying.*
+![Radiometric Matrix Decode 3D](docs/figures/2_radiometric_matrix_decode_3d.png)
+
+#### Figure 3: Edge Sensor Data Delivery to Downstream AI Service
+*Local inter-process HTTP ingestion and payload formatting between the acquisition daemon and the AI-Thermal-detect forecasting engine.*
+![Jetson to AI Service 3D](docs/figures/3_jetson_to_ai_service_3d.png)
 
 ---
 
-## 3. Coordinate Transformation & Point-Sampling Logic
+## 4. Coordinate Transformation & Point-Sampling Logic
 
 To allow remote operator configuration without re-deploying edge scripts, target measuring zones are defined in normalized coordinates $[0.0, 1.0]$:
 
@@ -63,20 +71,23 @@ spot_temp_celsius = float(thermal_matrix[my, mx])
 
 ---
 
-## 4. Repository Structure
+## 5. Repository Structure
 
 ```
 Get-Thermal-Jetson-nano/
-├── thermal_matrix.py       # Standalone daemon with OpenCV GUI for interactive radiometric inspection
-├── thermal_receiver.py     # Local HTTP receiver for verification and sample logging
-├── dataset_nhiet_do1.csv   # Historical raw temperature measurements acquired from live trials
-├── received_data/          # Structured JSON telemetry snapshots captured during site calibration
-└── src/                    # Early feature engineering and prototype verification scripts
+├── scripts/
+│   └── visualize_architecture.py # 3D volumetric diagram generation script
+├── docs/figures/                 # 300 DPI isometric volumetric architecture figures
+├── thermal_matrix.py             # Standalone daemon with OpenCV GUI for interactive radiometric inspection
+├── thermal_receiver.py           # Local HTTP receiver for verification and sample logging
+├── dataset_nhiet_do1.csv         # Historical raw temperature measurements acquired from live trials
+├── received_data/                # Structured JSON telemetry snapshots captured during site calibration
+└── src/                          # Prototype verification scripts
 ```
 
 ---
 
-## 5. Verification & Live Execution
+## 6. Verification & Live Execution
 
 Run the interactive radiometric viewer on a Jetson desktop environment:
 ```bash
@@ -85,4 +96,4 @@ python3 thermal_matrix.py
 
 *Interactive Controls:*
 - **Left Click:** Place a target probe on any pixel of the live thermal stream to display the exact radiometric Celsius reading.
-- **Data Loop:** Refreshes at approximately 10 Hz over local industrial Ethernet.
+- **Data Loop:** Configured for periodic sampling over local industrial Ethernet.
