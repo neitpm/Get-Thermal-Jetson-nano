@@ -1,0 +1,19 @@
+services:
+  thermal-acquisition-jetson:
+    build:
+      context: .
+      dockerfile: Dockerfile.jetson
+    image: get-thermal-jetson-nano:latest
+    container_name: thermal_acquisition_jetson
+    network_mode: host
+    environment:
+      - THERMAL_CAMERA_HOST=${THERMAL_CAMERA_HOST:-192.168.10.152}
+      - THERMAL_CAMERA_PORT=${THERMAL_CAMERA_PORT:-80}
+      - THERMAL_CAMERA_USER=${THERMAL_CAMERA_USER:-admin}
+      - THERMAL_CAMERA_PASSWORD=${THERMAL_CAMERA_PASSWORD:-Demo@2024}
+      - THERMAL_CHANNEL=${THERMAL_CHANNEL:-2}
+      - AI_SERVICE_URL=${AI_SERVICE_URL:-http://localhost:8080/api/thermal-data}
+    volumes:
+      - ./received_data:/app/received_data
+      - ./data:/app/data
+    restart: unless-stopped

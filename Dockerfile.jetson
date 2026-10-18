@@ -1,0 +1,32 @@
+# ==============================================================================
+# Dockerfile.jetson: Get-Thermal-Jetson-nano Acquisition Daemon
+# Targets NVIDIA Jetson (L4T / JetPack 5.x / 6.x) with OpenCV & ISAPI Client
+# ==============================================================================
+
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt* ./
+RUN pip install --no-cache-dir requests numpy opencv-python
+
+COPY . .
+
+# Environment variables for Camera connection (overridable)
+ENV THERMAL_CAMERA_HOST="192.168.10.152" \
+    THERMAL_CAMERA_PORT=80 \
+    THERMAL_CAMERA_USER="admin" \
+    THERMAL_CAMERA_PASSWORD="" \
+    THERMAL_CHANNEL=2 \
+    AI_SERVICE_URL="http://ai-thermal-detect:8080/api/thermal-data"
+
+CMD ["python3", "thermal_matrix.py"]

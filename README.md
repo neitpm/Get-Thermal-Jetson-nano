@@ -97,3 +97,43 @@ python3 thermal_matrix.py
 *Interactive Controls:*
 - **Left Click:** Place a target probe on any pixel of the live thermal stream to display the exact radiometric Celsius reading.
 - **Data Loop:** Configured for periodic sampling over local industrial Ethernet.
+
+---
+
+## 7. Docker Architecture & Jetson Container Deployment
+
+#### Figure 4: Containerized Sensing Pipeline with Host Networking
+*Host networking ensures zero NAT latency when communicating with industrial Hikvision ISAPI sensors.*
+![Docker Jetson Pipeline 3D](docs/figures/docker_jetson_pipeline_3d.png)
+
+The acquisition daemon can be deployed as an isolated container on NVIDIA Jetson devices running JetPack.
+
+### A. Environment Variables
+| Variable | Default Value | Description |
+|---|---|---|
+| `THERMAL_CAMERA_HOST` | `192.168.10.152` | IP address of the Hikvision thermal camera |
+| `THERMAL_CAMERA_PORT` | `80` | HTTP port for ISAPI requests |
+| `THERMAL_CAMERA_USER` | `admin` | Camera HTTP Digest authentication username |
+| `THERMAL_CAMERA_PASSWORD` | `Demo@2024` | Camera authentication password (injected via secret/.env) |
+| `THERMAL_CHANNEL` | `2` | ISAPI thermography channel (Channel 2 = Thermal) |
+| `AI_SERVICE_URL` | `http://localhost:8080/api/thermal-data` | Target AI forecasting ingestion endpoint |
+
+### B. Deployment via Docker Compose
+```bash
+# 1. Validate Docker Compose configuration
+docker compose -f docker-compose.jetson.yml config
+
+# 2. Start acquisition daemon with host networking
+docker compose -f docker-compose.jetson.yml up -d --build
+
+# 3. Check container logs
+docker compose -f docker-compose.jetson.yml logs -f
+
+# 4. Stop service
+docker compose -f docker-compose.jetson.yml down
+```
+
+> [!IMPORTANT]  
+> **Host Networking Requirement:**  
+> `network_mode: host` is essential to allow native UDP/TCP socket discovery and low-latency ISAPI HTTP Digest streaming from physical network switches without bridge NAT overhead.
+
